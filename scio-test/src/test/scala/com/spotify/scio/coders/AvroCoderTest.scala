@@ -19,8 +19,10 @@ package com.spotify.scio.coders
 
 import org.scalatest.flatspec.AnyFlatSpec
 import com.spotify.scio.testing.CoderAssertions._
+import org.apache.avro.AvroRuntimeException
 import org.apache.avro.generic.GenericRecord
 import org.apache.avro.specific.SpecificRecord
+import org.apache.beam.sdk.util.CoderUtils
 import org.scalactic.Equality
 import org.scalatest.matchers.should.Matchers
 
@@ -30,29 +32,39 @@ final class AvroCoderTest extends AnyFlatSpec with Matchers {
     Avro.user coderShould notFallback()
   }
 
+  it should "use String when decoding CharSequence in Avro's SpecificRecord" in {
+    val c = Coder[com.spotify.scio.avro.User]
+    val bc = CoderMaterializer.beamWithDefault(c)
+    val bytes = CoderUtils.encodeToByteArray(bc, Avro.user)
+    val decoded = CoderUtils.decodeFromByteArray(bc, bytes)
+    decoded.getFirstName shouldBe a[String]
+  }
+
   it should "support not Avro's SpecificRecord if a concrete type is not provided" in {
     val caught = intercept[RuntimeException] {
       Avro.user.asInstanceOf[SpecificRecord] coderShould notFallback()
     }
-
-    caught.getMessage should startWith(
-      "Failed to create a coder for SpecificRecord because it is impossible to retrieve an Avro"
-    )
-  }
-
-  it should "support avrohugger generated SpecificRecord" in {
-    Avro.scalaSpecificAvro coderShould notFallback()
+    val cause = caught.getCause.getCause
+    cause shouldBe a[AvroRuntimeException]
+    cause.getMessage shouldBe "Not a Specific class: interface org.apache.avro.specific.SpecificRecord"
   }
 
   it should "support Avro's GenericRecord" in {
     val schema = Avro.user.getSchema
     val record: GenericRecord = Avro.user
-
     implicit val c: Coder[GenericRecord] = Coder.avroGenericRecordCoder(schema)
     implicit val eq: Equality[GenericRecord] =
       (a: GenericRecord, b: Any) => a.toString === b.toString
 
     record coderShould notFallback()
+  }
+
+  it should "use String when decoding CharSequence in Avro's GenericRecord" in {
+    val c = Coder.avroGenericRecordCoder(Avro.user.getSchema)
+    val bc = CoderMaterializer.beamWithDefault(c)
+    val bytes = CoderUtils.encodeToByteArray(bc, Avro.user)
+    val decoded = CoderUtils.decodeFromByteArray(bc, bytes)
+    decoded.get("first_name") shouldBe a[String]
   }
 
   it should "provide a fallback for GenericRecord if no safe coder is available" in {

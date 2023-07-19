@@ -25,11 +25,11 @@ import com.spotify.scio.avro._
 import com.spotify.scio.coders.Coder
 import com.spotify.scio.proto.Track.TrackPB
 import com.spotify.scio.testing._
-import com.spotify.scio.util.ScioUtil
-import com.spotify.scio.util.FilenamePolicySupplier
+import com.spotify.scio.util.{FilenamePolicySupplier, Functions, ScioUtil}
 import com.spotify.scio.values.{SCollection, WindowOptions}
 import org.apache.avro.file.CodecFactory
 import org.apache.avro.generic.GenericRecord
+import org.apache.beam.sdk.extensions.avro.io.{AvroIO => BAvroIO}
 import org.apache.beam.sdk.values.PCollection.IsBounded
 import org.apache.commons.io.FileUtils
 import org.joda.time.{Duration, Instant}
@@ -383,12 +383,15 @@ class ScioIOTest extends ScioIOSpec {
     val out2 = new File(new File(CoreSysProps.TmpDir.value), "scio-test-" + UUID.randomUUID())
     val out2TempDir =
       new File(new File(CoreSysProps.TmpDir.value), "scio-test-" + UUID.randomUUID())
+    val cls = ScioUtil.classOf[TestRecord]
     val sr2 = SpecificRecordIO[TestRecord](out2.getAbsolutePath)
-    val write2 = BAvroIO.write(ScioUtil.classOf[TestRecord])
+    val write2 = BAvroIO.write(cls)
+    val factory2 = new ScioSpecificRecordDatumFactory(cls)
 
     val currentTransform: BAvroIO.Write[TestRecord] = sr2.avroOut(
       write2,
       out2.getAbsolutePath,
+      factory2,
       numShards,
       suffix,
       codec,
@@ -418,6 +421,7 @@ class ScioIOTest extends ScioIOSpec {
     val numShards = 10
     val codec = CodecFactory.deflateCodec(6)
     val metadata = Map.empty[String, AnyRef]
+    val avroT = AvroType[AvroRecord]
 
     /*
      * pre-scio 0.12.0
@@ -425,9 +429,11 @@ class ScioIOTest extends ScioIOSpec {
     val out1 = new File(new File(CoreSysProps.TmpDir.value), "scio-test-" + UUID.randomUUID())
     val out1TempDir =
       new File(new File(CoreSysProps.TmpDir.value), "scio-test-" + UUID.randomUUID())
-    val write1 = AvroTyped.writeTransform[AvroRecord]()
+    val write1 = BAvroIO.writeCustomTypeToGenericRecords[AvroRecord]()
 
     var previousTransform = write1
+      .withFormatFunction(Functions.serializableFn(avroT.toGenericRecord))
+      .withSchema(avroT.schema)
       .to(ScioUtil.pathWithPrefix(out1.getAbsolutePath, null))
       .withSuffix(suffix)
       .withNumShards(numShards)
@@ -444,7 +450,7 @@ class ScioIOTest extends ScioIOSpec {
     val out2TempDir =
       new File(new File(CoreSysProps.TmpDir.value), "scio-test-" + UUID.randomUUID())
     val sr2 = AvroTyped.AvroIO[AvroRecord](out2.getAbsolutePath)
-    val write2 = AvroTyped.writeTransform[AvroRecord]()
+    val write2 = BAvroIO.writeCustomTypeToGenericRecords[AvroRecord]()
 
     val currentTransform = sr2.typedAvroOut(
       write2,

@@ -924,8 +924,6 @@ object Avro {
   val accounts: List[Account] = List(new Account(1, "type", "name", 12.5, null))
   val address = new Address("street1", "street2", "city", "state", "01234", "Sweden")
   val user = new AvUser(1, "lastname", "firstname", "email@foobar.com", accounts.asJava, address)
-
-  val scalaSpecificAvro: AvroHugger = AvroHugger(42)
 }
 
 // proto

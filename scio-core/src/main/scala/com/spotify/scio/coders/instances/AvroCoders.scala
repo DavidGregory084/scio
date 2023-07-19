@@ -17,13 +17,14 @@
 
 package com.spotify.scio.coders.instances
 
+import com.spotify.scio.avro.{ScioGenericRecordDatumFactory, ScioSpecificRecordDatumFactory}
 import com.spotify.scio.coders.Coder
 import com.spotify.scio.util.ScioUtil
 import org.apache.avro.Schema
 import org.apache.avro.generic.GenericRecord
 import org.apache.avro.io.{DatumReader, DatumWriter}
 import org.apache.avro.reflect.{ReflectDatumReader, ReflectDatumWriter}
-import org.apache.avro.specific.{SpecificData, SpecificFixed, SpecificRecord}
+import org.apache.avro.specific.{SpecificData, SpecificDatumReader, SpecificFixed, SpecificRecord}
 import org.apache.beam.sdk.coders.Coder.NonDeterministicException
 import org.apache.beam.sdk.coders.{AtomicCoder, CustomCoder, StringUtf8Coder}
 import org.apache.beam.sdk.extensions.avro.coders.AvroCoder
@@ -41,7 +42,7 @@ final private class SlowGenericRecordCoder extends AtomicCoder[GenericRecord] {
 
   override def encode(value: GenericRecord, os: OutputStream): Unit = {
     val schema = value.getSchema
-    val coder = AvroCoder.of(schema)
+    val coder = AvroCoder.of(ScioGenericRecordDatumFactory, schema)
     sc.encode(schema.toString, os)
     coder.encode(value, os)
   }
@@ -49,7 +50,7 @@ final private class SlowGenericRecordCoder extends AtomicCoder[GenericRecord] {
   override def decode(is: InputStream): GenericRecord = {
     val schemaStr = sc.decode(is)
     val schema = new Schema.Parser().parse(schemaStr)
-    val coder = AvroCoder.of(schema)
+    val coder = AvroCoder.of(ScioGenericRecordDatumFactory, schema)
     coder.decode(is)
   }
 
@@ -61,16 +62,20 @@ final private class SlowGenericRecordCoder extends AtomicCoder[GenericRecord] {
     )
   override def consistentWithEquals(): Boolean = false
   override def structuralValue(value: GenericRecord): AnyRef =
-    AvroCoder.of(value.getSchema).structuralValue(value)
+    AvroCoder.of(ScioGenericRecordDatumFactory, value.getSchema).structuralValue(value)
 
   // delegate methods for byte size estimation
   override def isRegisterByteSizeObserverCheap(value: GenericRecord): Boolean =
-    AvroCoder.of(value.getSchema).isRegisterByteSizeObserverCheap(value)
+    AvroCoder
+      .of(ScioGenericRecordDatumFactory, value.getSchema)
+      .isRegisterByteSizeObserverCheap(value)
   override def registerByteSizeObserver(
     value: GenericRecord,
     observer: ElementByteSizeObserver
   ): Unit =
-    AvroCoder.of(value.getSchema).registerByteSizeObserver(value, observer)
+    AvroCoder
+      .of(ScioGenericRecordDatumFactory, value.getSchema)
+      .registerByteSizeObserver(value, observer)
 }
 
 /**
@@ -81,7 +86,7 @@ final private class SlowGenericRecordCoder extends AtomicCoder[GenericRecord] {
 final private class SpecificFixedCoder[A <: SpecificFixed](cls: Class[A]) extends CustomCoder[A] {
   // lazy because AVRO Schema isn't serializable
   @transient private[this] lazy val schema: Schema = SpecificData.get().getSchema(cls)
-  private[this] val size = SpecificData.get().getSchema(cls).getFixedSize
+  private[this] val size = schema.getFixedSize
 
   def encode(value: A, outStream: OutputStream): Unit = {
     assert(value.bytes().length == size)
@@ -123,55 +128,17 @@ trait AvroCoders {
    * @return
    *   Coder[GenericRecord]
    */
-  // TODO: Use a coder that does not serialize the schema
   def avroGenericRecordCoder(schema: Schema): Coder[GenericRecord] =
-    Coder.beam(AvroCoder.of(schema))
+    Coder.beam(AvroCoder.of(ScioGenericRecordDatumFactory, schema))
 
   // XXX: similar to GenericAvroSerializer
   def avroGenericRecordCoder: Coder[GenericRecord] =
     Coder.beam(new SlowGenericRecordCoder)
 
-  // Try to get the schema with SpecificData.getSchema
-  // This relies on private SCHEMA$ field that may not be defined on custom SpecificRecord instance
-  // Otherwise create a default instance and call getSchema
-  private def schemaForClass[T <: SpecificRecord](clazz: Class[T]): Try[Schema] =
-    Try(SpecificData.get().getSchema(clazz))
-      .orElse(Try(clazz.getDeclaredConstructor().newInstance().getSchema))
-
   implicit def avroSpecificRecordCoder[T <: SpecificRecord: ClassTag]: Coder[T] = {
-    val clazz = ScioUtil.classOf[T]
-    val schema = schemaForClass(clazz).getOrElse {
-      val msg =
-        "Failed to create a coder for SpecificRecord because it is impossible to retrieve an " +
-          s"Avro schema by instantiating $clazz. Use only a concrete type implementing " +
-          s"SpecificRecord or use GenericRecord type in your transformations if a concrete " +
-          s"type is not known in compile time."
-      throw new RuntimeException(msg)
-    }
-
-    val factory = new AvroDatumFactory(clazz) {
-      override def apply(writer: Schema, reader: Schema): DatumReader[T] = {
-        // create the datum writer using the schema api
-        // class API might be unsafe. See schemaForClass
-        val datumReader = new ReflectDatumReader[T](schemaForClass(clazz).get);
-        datumReader.setExpected(reader)
-        datumReader.setSchema(writer)
-        // for backward compat, add logical type support by default
-        AvroUtils.addLogicalTypeConversions(datumReader.getData)
-        datumReader
-      }
-
-      override def apply(writer: Schema): DatumWriter[T] = {
-        // create the datum writer using the schema api
-        // class API might be unsafe. See schemaForClass
-        val datumWriter = new ReflectDatumWriter[T](schemaForClass(clazz).get)
-        datumWriter.setSchema(writer)
-        // for backward compat, add logical type support by default
-        AvroUtils.addLogicalTypeConversions(datumWriter.getData)
-        datumWriter
-      }
-    }
-
+    val cls = ScioUtil.classOf[T]
+    val factory = new ScioSpecificRecordDatumFactory(cls)
+    val schema = SpecificData.get().getSchema(cls)
     Coder.beam(AvroCoder.of(factory, schema))
   }
 
