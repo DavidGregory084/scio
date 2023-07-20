@@ -22,19 +22,14 @@ import com.spotify.scio.coders.Coder
 import com.spotify.scio.util.ScioUtil
 import org.apache.avro.Schema
 import org.apache.avro.generic.GenericRecord
-import org.apache.avro.io.{DatumReader, DatumWriter}
-import org.apache.avro.reflect.{ReflectDatumReader, ReflectDatumWriter}
-import org.apache.avro.specific.{SpecificData, SpecificDatumReader, SpecificFixed, SpecificRecord}
+import org.apache.avro.specific.{SpecificData, SpecificFixed, SpecificRecord}
 import org.apache.beam.sdk.coders.Coder.NonDeterministicException
 import org.apache.beam.sdk.coders.{AtomicCoder, CustomCoder, StringUtf8Coder}
 import org.apache.beam.sdk.extensions.avro.coders.AvroCoder
-import org.apache.beam.sdk.extensions.avro.io.AvroDatumFactory
-import org.apache.beam.sdk.extensions.avro.schemas.utils.AvroUtils
 import org.apache.beam.sdk.util.common.ElementByteSizeObserver
 
 import java.io.{InputStream, OutputStream}
 import scala.reflect.{classTag, ClassTag}
-import scala.util.Try
 
 final private class SlowGenericRecordCoder extends AtomicCoder[GenericRecord] {
   // TODO: can we find something more efficient than String ?
