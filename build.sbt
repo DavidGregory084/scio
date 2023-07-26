@@ -138,6 +138,7 @@ val scalatestVersion = "3.2.16"
 val shapelessVersion = "2.3.10"
 val sparkeyVersion = "3.2.5"
 val tensorFlowVersion = "0.4.2"
+val tensorFlowMetadataVersion = "1.13.1"
 val testContainersVersion = "0.40.17"
 val zoltarVersion = "0.6.0"
 // dependent versions
@@ -449,7 +450,7 @@ def beamRunnerSettings: Seq[Setting[_]] = Seq(
 ThisBuild / PB.protocVersion := protobufVersion
 lazy val protobufConfigSettings = Def.settings(
   PB.targets := Seq(
-    PB.gens.java -> (ThisScope.copy(config = Zero) / sourceManaged).value /
+    PB.gens.java(protobufVersion) -> (ThisScope.copy(config = Zero) / sourceManaged).value /
       "compiled_proto" /
       configuration.value.name,
     PB.gens.plugin("grpc-java") -> (ThisScope.copy(config = Zero) / sourceManaged).value /
@@ -1012,6 +1013,7 @@ lazy val `scio-parquet`: Project = project
   .dependsOn(
     `scio-core`,
     `scio-avro`,
+    `scio-tensorflow` % "provided->compile",
     `scio-test` % "test->test"
   )
   .settings(commonSettings)
@@ -1037,7 +1039,7 @@ lazy val `scio-parquet`: Project = project
       "com.google.protobuf" % "protobuf-java" % protobufVersion,
       "com.spotify" %% "magnolify-parquet" % magnolifyVersion,
       "com.twitter" %% "chill" % chillVersion,
-      "me.lyh" % "parquet-tensorflow" % parquetExtraVersion,
+//      "me.lyh" % "parquet-tensorflow" % parquetExtraVersion,
       "me.lyh" %% "parquet-avro" % parquetExtraVersion,
       "org.apache.avro" % "avro" % avroVersion,
       "org.apache.avro" % "avro-compiler" % avroVersion,
@@ -1105,6 +1107,20 @@ lazy val `scio-tensorflow`: Project = project
       "com.spotify" %% "magnolify-tensorflow" % magnolifyVersion % Test,
       "org.slf4j" % "log4j-over-slf4j" % slf4jVersion % Test,
       "org.slf4j" % "slf4j-simple" % slf4jVersion % Test
+    ),
+    Compile / PB.protoSources += target.value / s"metadata-$tensorFlowMetadataVersion",
+    Compile / PB.unpackDependencies := {
+      val tfMetadata = new URL(
+        s"https://github.com/tensorflow/metadata/archive/refs/tags/v$tensorFlowMetadataVersion.zip"
+      )
+      val protoFiles = IO.unzipURL(tfMetadata, target.value, "*.proto")
+      val root = target.value / s"metadata-$tensorFlowMetadataVersion"
+      val metadataDep = ProtocPlugin.UnpackedDependency(protoFiles.toSeq, Seq.empty)
+      val deps = (Compile / PB.unpackDependencies).value
+      new ProtocPlugin.UnpackedDependencies(deps.mappedFiles ++ Map(root -> metadataDep))
+    },
+    Compile / PB.targets := Seq(
+      PB.gens.java(protobufVersion) -> (Compile / sourceManaged).value
     )
   )
 
