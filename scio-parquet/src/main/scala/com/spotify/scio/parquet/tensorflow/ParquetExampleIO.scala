@@ -72,14 +72,14 @@ final case class ParquetExampleIO(path: String) extends ScioIO[Example] {
     val job = Job.getInstance(conf)
     val filePattern = ScioUtil.filePattern(path, params.suffix)
 
-//    Option(params.projection).foreach { projection =>
-//      ExampleParquetInputFormat.setFields(job, projection.asJava)
-//      conf.set(ExampleParquetInputFormat.FIELDS_KEY, String.join(",", projection: _*))
-//    }
-
-    Option(params.predicate).foreach { predicate =>
-      ParquetInputFormat.setFilterPredicate(conf, predicate)
+    Option(params.projection).foreach { projection =>
+      ExampleParquetInputFormat.setRequestedProjection(job, projection)
+      ExampleParquetInputFormat.setExampleReadSchema(job, projection)
     }
+
+//    Option(params.predicate).foreach { predicate =>
+//      ParquetInputFormat.setFilterPredicate(conf, predicate)
+//    }
 
     val coder = CoderMaterializer.beam(sc, Coder[Example])
 
@@ -100,17 +100,19 @@ final case class ParquetExampleIO(path: String) extends ScioIO[Example] {
   ): SCollection[Example] = {
     val job = Job.getInstance(conf)
     GcsConnectorUtil.setInputPaths(sc, job, path)
-//    job.setInputFormatClass(classOf[ExampleParquetInputFormat])
+    job.setInputFormatClass(classOf[ExampleParquetInputFormat])
     job.getConfiguration.setClass("key.class", classOf[Void], classOf[Void])
     job.getConfiguration.setClass("value.class", classOf[Example], classOf[Example])
 
-//    ParquetInputFormat.setReadSupportClass(job, classOf[ExampleReadSupport])
-//    if (params.projection != null) {
-//      ExampleParquetInputFormat.setFields(job, params.projection.asJava)
-//    }
-    if (params.predicate != null) {
-      ParquetInputFormat.setFilterPredicate(job.getConfiguration, params.predicate)
+    ParquetInputFormat.setReadSupportClass(job, classOf[ExampleReadSupport])
+    Option(params.projection).foreach { projection =>
+      ExampleParquetInputFormat.setRequestedProjection(job, projection)
+      ExampleParquetInputFormat.setExampleReadSchema(job, projection)
     }
+
+//    Option(params.predicate != null).foreach { predicate =>
+//      ParquetInputFormat.setFilterPredicate(job.getConfiguration, predicate)
+//    }
 
     val source = HadoopFormatIO
       .read[JBoolean, Example]()
@@ -132,8 +134,9 @@ final case class ParquetExampleIO(path: String) extends ScioIO[Example] {
         projectionOpt match {
           case None => example
           case Some(projection) =>
+            val featureNames = projection.getFeatureList.asScala.map(_.getName).toSet
             val projectedFeatures = example.getFeatures.getFeatureMap.asScala.filter {
-              case (k, _) => projection.contains(k)
+              case (k, _) => featureNames.contains(k)
             }.asJava
 
             example.toBuilder
@@ -206,7 +209,7 @@ final case class ParquetExampleIO(path: String) extends ScioIO[Example] {
 object ParquetExampleIO {
 
   object ReadParam {
-    val DefaultProjection: Seq[String] = null
+    val DefaultProjection: Schema = null
     val DefaultPredicate: FilterPredicate = null
     val DefaultConfiguration: Configuration = null
     val DefaultSuffix: String = null
@@ -218,7 +221,7 @@ object ParquetExampleIO {
       )
   }
   final case class ReadParam private (
-    projection: Seq[String] = ReadParam.DefaultProjection,
+    projection: Schema = ReadParam.DefaultProjection,
     predicate: FilterPredicate = ReadParam.DefaultPredicate,
     conf: Configuration = ReadParam.DefaultConfiguration,
     suffix: String = ReadParam.DefaultSuffix
@@ -254,11 +257,10 @@ final case class ParquetExampleTap(path: String, params: ParquetExampleIO.ReadPa
     val filePattern = ScioUtil.filePattern(path, params.suffix)
     val xs = FileSystems.`match`(filePattern).metadata().asScala.toList
     xs.iterator.flatMap { metadata =>
-      val reader: ParquetReader[Example] = ???
-//      ExampleParquetReader
-//        .builder(BeamInputFile.of(metadata.resourceId()))
-//        .withConf(Option(params.conf).getOrElse(new Configuration()))
-//        .build()
+      val reader: ParquetReader[Example] = ExampleParquetReader
+        .builder(BeamInputFile.of(metadata.resourceId()))
+        .withConf(Option(params.conf).getOrElse(new Configuration()))
+        .build()
       new Iterator[Example] {
         private var current: Example = reader.read()
         override def hasNext: Boolean = current != null
